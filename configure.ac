@@ -1,7 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-AC_PREREQ([2.67])
+AC_PREREQ([2.6])
 AC_INIT([ChinaDNS-C], [1.1.7], [clowwindy42@gmail.com])
 AC_CONFIG_SRCDIR([src/chinadns.c])
 AC_CONFIG_HEADERS([config.h])
