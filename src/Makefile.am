@@ -1,3 +1,4 @@
-bin_PROGRAMS = chinadns
+AM_LDFLAGS = -lresolv -lm
 
+bin_PROGRAMS = chinadns
 chinadns_SOURCES = chinadns.c
