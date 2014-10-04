@@ -112,7 +112,7 @@ static void check_and_send_delay();
 static void free_delay(int pos);
 
 static int init_ipset(void);
-static int add_to_ipset(struct in_addr *, int );
+static int add_to_ipset(struct in_addr[], int );
 
 static int init_domain_hashset(void);
 static int domain_match(const char *);
@@ -144,6 +144,7 @@ static const char *help_message =
   "  -s DNS                DNS servers to use, default:\n"
   "                        114.114.114.114,208.67.222.222:443,8.8.8.8\n"
   "  -S IPSET_NAME         auto add filtered domain to ipset\n"
+  "  -D DOMAINS_FILE       path to domain blocklist file\n"
   "  -v                    verbose logging\n"
   "\n"
   "Online help: <https://github.com/clowwindy/ChinaDNS-C>\n";
@@ -252,7 +253,7 @@ static int parse_args(int argc, char **argv) {
   listen_port = strdup(default_listen_port);
   domains_file = strdup(default_domains_file);
   ipset_name = NULL;
-  while ((ch = getopt(argc, argv, "hb:p:s:l:c:S:v")) != -1) {
+  while ((ch = getopt(argc, argv, "hb:p:s:l:c:S:D:v")) != -1) {
     switch (ch) {
     case 'h':
       printf("%s", help_message);
@@ -274,6 +275,9 @@ static int parse_args(int argc, char **argv) {
       break;
     case 'v':
       verbose = 1;
+      break;
+    case 'D':
+      domains_file = strdup(optarg);
       break;
     case 'S':
       ipset_name = strdup(optarg);
@@ -593,7 +597,6 @@ static void dns_handle_remote() {
       } else {
         if (verbose)
           printf("filter\n");
-        id_addr->is_walled = 1;
       }
     } else {
       if (verbose)
@@ -652,7 +655,7 @@ static const char *hostname_from_question(ns_msg msg) {
 
 static int should_filter_query(ns_msg msg, struct in_addr dns_addr, id_addr_t *id_addr) {
   ns_rr rr;
-  int rrnum, rrmax, addr_numbs=0;
+  int rrnum, rrmax, addrsnum=0;
   void *r;
   struct in_addr response_adds[8] = {0};
   size_t adds_len = sizeof(response_adds)/sizeof(struct in_addr);
@@ -684,20 +687,20 @@ static int should_filter_query(ns_msg msg, struct in_addr dns_addr, id_addr_t *i
       if (chnroute_file && dns_is_chn) {
         // filter DNS result from chn dns if result is outside chn
         if (!test_ip_in_list(*(struct in_addr *)rd, &chnroute_list)){
-          id_addr->is_walled = 1;
+          //id_addr->is_walled = 1;
           return 1;
         }
       }
 
-      if(id_addr->is_walled && rrnum < adds_len){
-    	  response_adds[rrnum].s_addr = ((struct in_addr *)rd)->s_addr;
-    	  addr_numbs++;
+      if(id_addr->is_walled && addrsnum < adds_len){
+        response_adds[addrsnum].s_addr = ((struct in_addr *)rd)->s_addr;
+        addrsnum++;
       }
     }
   }
 
   printf("\n");
-  add_to_ipset(response_adds, addr_numbs);
+  add_to_ipset(response_adds, addrsnum);
   return 0;
 }
 
@@ -759,10 +762,10 @@ static int init_ipset(void){
   return system(cmd);
 }
 
-static int add_to_ipset(struct in_addr *adds, int n){
+static int add_to_ipset(struct in_addr adds[], int n){
   char buf[64] = {0};
   const int buf_size = 64;
-  char cmd[buf_size*4] = {0};
+  char cmd[256] = {0};
   const int cmd_size = 256;
   int i = 0;
   int retcode = 0;
@@ -771,10 +774,13 @@ static int add_to_ipset(struct in_addr *adds, int n){
     return 0;
 
   for(i=0; i<n;){
-    snprintf(buf, buf_size, "ipset add %s %s -exist;",
+    if((int)(adds[i].s_addr) != 0){
+      snprintf(buf, buf_size, "ipset add %s %s -exist;",
         ipset_name, inet_ntoa(adds[i]));
-    strncat(cmd, buf, cmd_size/4);
+      strncat(cmd, buf, cmd_size/4);
+    }
     i++;
+
     if(i%4 == 0 || i >= n){
       if(verbose)
         printf("%s\n", cmd);
@@ -826,7 +832,7 @@ static int domain_match(const char *domain){
     return 1;
   while(p != domain){
     if(*p == '.'){
-      if(hashset_find(set, p)) return 1;
+      if(hashset_find(set, p+1)) return 1;
     }
     p--;
   }
