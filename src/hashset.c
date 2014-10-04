@@ -17,7 +17,7 @@
 #define HASH_TO_INDEX(hash, size) ((hash) % (size))
 #define BUF_LEN	128
 
-static elem_t* new_elem(char *);
+static elem_t* new_elem(const char *);
 static void free_elem(elem_t *);
 static size_t hashset_add_elem(hashset_t *, elem_t *);
 static int hashset_expand(hashset_t *, size_t );
@@ -60,7 +60,7 @@ static int get_prime(size_t num){
 	return num;
 }
 
-static elem_t* new_elem(char *key){
+static elem_t* new_elem(const char *key){
 	elem_t *elem = NULL;
 	elem = my_calloc(1, sizeof(elem_t)+strlen(key)+1);
 	elem->key = (char *)elem+sizeof(elem_t);
@@ -123,7 +123,7 @@ static size_t hashset_add_elem(hashset_t *set, elem_t *elem){
 	return index;
 }
 
-size_t hashset_add_key(hashset_t *set, char* key){
+size_t hashset_add_key(hashset_t *set, const char* key){
 	return hashset_add_elem(set, new_elem(key));
 }
 
@@ -144,7 +144,7 @@ static int hashset_expand(hashset_t *set, size_t size){
 	return 0;
 }
 
-elem_t* hashset_find(hashset_t *set, char *key){
+elem_t* hashset_find(hashset_t *set, const char *key){
 	elem_t *p = 0;
 	p = set->elems[HASH_TO_INDEX(sdbm_hash(key), set->size)];
 	while(p){
