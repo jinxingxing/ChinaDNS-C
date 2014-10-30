@@ -1,0 +1,17 @@
+google.com
+google.com.hk
+gstatic.com
+ggpht.com
+googleusercontent.com
+appspot.com
+googlecode.com
+googleapis.com
+gmail.com
+google-analytics.com
+youtube.com
+googlevideo.com
+youtube-nocookie.com
+ytimg.com
+blogspot.com
+blogger.com
+co.uk

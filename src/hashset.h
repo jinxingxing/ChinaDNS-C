@@ -29,8 +29,8 @@ typedef struct hashset_iterator_t_ {
 hashset_t* new_hashset(size_t );
 void free_hashset(hashset_t* );
 
-size_t hashset_add_key(hashset_t *, char* );
-elem_t* hashset_find(hashset_t *, char *);
+size_t hashset_add_key(hashset_t *, const char* );
+elem_t* hashset_find(hashset_t *, const char *);
 void hashset_it(hashset_t *, hashset_iterator_t *);
 elem_t* hashset_it_next(hashset_iterator_t *);
 void hashset_map(hashset_t *, void* func_args, void (*func)(void *, elem_t *));

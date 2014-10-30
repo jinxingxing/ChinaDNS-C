@@ -10,6 +10,7 @@
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include "hashset.h"
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -109,7 +110,17 @@ static void schedule_delay(const char *buf, size_t buflen,
                            struct sockaddr *addr, socklen_t addrlen);
 static void check_and_send_delay();
 static void free_delay(int pos);
-static int add_to_ipset(struct in_addr *addr_lists, int n);
+
+static int init_ipset(void);
+static int add_to_ipset(struct in_addr[], int );
+
+static int init_domain_hashset(void);
+static int domain_match(const char *);
+
+
+static hashset_t *domain_set = NULL;
+static const char *default_domains_file = "domains.txt";
+static char *domains_file = NULL;
 
 // next position for first, not used
 static int delay_queue_first = 0;
@@ -133,6 +144,7 @@ static const char *help_message =
   "  -s DNS                DNS servers to use, default:\n"
   "                        114.114.114.114,208.67.222.222:443,8.8.8.8\n"
   "  -S IPSET_NAME         auto add filtered domain to ipset\n"
+  "  -D DOMAINS_FILE       path to domain blocklist file\n"
   "  -v                    verbose logging\n"
   "\n"
   "Online help: <https://github.com/clowwindy/ChinaDNS-C>\n";
@@ -179,6 +191,8 @@ int main(int argc, char **argv) {
   if (0 != resolve_dns_servers())
     return EXIT_FAILURE;
   if (0 != dns_init_sockets())
+    return EXIT_FAILURE;
+  if( 0 != init_domain_hashset())
     return EXIT_FAILURE;
 
   printf("%s\n", version);
@@ -237,8 +251,9 @@ static int parse_args(int argc, char **argv) {
   ip_list_file = strdup(default_ip_list_file);
   listen_addr = strdup(default_listen_addr);
   listen_port = strdup(default_listen_port);
+  domains_file = strdup(default_domains_file);
   ipset_name = NULL;
-  while ((ch = getopt(argc, argv, "hb:p:s:l:c:S:v")) != -1) {
+  while ((ch = getopt(argc, argv, "hb:p:s:l:c:S:D:v")) != -1) {
     switch (ch) {
     case 'h':
       printf("%s", help_message);
@@ -261,9 +276,14 @@ static int parse_args(int argc, char **argv) {
     case 'v':
       verbose = 1;
       break;
+    case 'D':
+      domains_file = strdup(optarg);
+      break;
     case 'S':
-    	ipset_name = strdup(optarg);
-    	LOG("ipset enabled, setname %s\n", ipset_name);
+      ipset_name = strdup(optarg);
+      if(init_ipset() != 0)
+          return EXIT_FAILURE;
+      LOG("ipset enabled, setname %s\n", ipset_name);
       break;
     default:
       printf("%s", help_message);
@@ -550,13 +570,17 @@ static void dns_handle_remote() {
     // parse DNS query id
     // TODO assign new id instead of using id from clients
     query_id = ns_msg_id(msg);
+    id_addr_t *id_addr = queue_lookup(query_id);
     question_hostname = hostname_from_question(msg);
     if (question_hostname) {
+      if(domain_match(question_hostname)){
+        if (verbose) printf("match domain %s\n", question_hostname);
+        id_addr->is_walled = 1;
+      }
       LOG("response %s from %s:%d - ", question_hostname,
           inet_ntoa(((struct sockaddr_in *)src_addr)->sin_addr),
           htons(((struct sockaddr_in *)src_addr)->sin_port));
     }
-    id_addr_t *id_addr = queue_lookup(query_id);
     if (id_addr) {
       id_addr->addr->sa_family = AF_INET;
       r = should_filter_query(msg, ((struct sockaddr_in *)src_addr)->sin_addr, id_addr);
@@ -573,7 +597,6 @@ static void dns_handle_remote() {
       } else {
         if (verbose)
           printf("filter\n");
-        id_addr->is_walled = 1;
       }
     } else {
       if (verbose)
@@ -632,9 +655,9 @@ static const char *hostname_from_question(ns_msg msg) {
 
 static int should_filter_query(ns_msg msg, struct in_addr dns_addr, id_addr_t *id_addr) {
   ns_rr rr;
-  int rrnum, rrmax, addr_numbs=0;
+  int rrnum, rrmax, addrsnum=0;
   void *r;
-  struct in_addr response_adds[2] = {0};
+  struct in_addr response_adds[8] = {0};
   size_t adds_len = sizeof(response_adds)/sizeof(struct in_addr);
   memset(response_adds, 0, adds_len);
   // TODO cache result for each dns server
@@ -664,20 +687,20 @@ static int should_filter_query(ns_msg msg, struct in_addr dns_addr, id_addr_t *i
       if (chnroute_file && dns_is_chn) {
         // filter DNS result from chn dns if result is outside chn
         if (!test_ip_in_list(*(struct in_addr *)rd, &chnroute_list)){
-          id_addr->is_walled = 1;
+          //id_addr->is_walled = 1;
           return 1;
         }
       }
 
-      if(id_addr->is_walled && rrnum < adds_len){
-    	  response_adds[rrnum].s_addr = ((struct in_addr *)rd)->s_addr;
-    	  addr_numbs++;
+      if(id_addr->is_walled && addrsnum < adds_len){
+        response_adds[addrsnum].s_addr = ((struct in_addr *)rd)->s_addr;
+        addrsnum++;
       }
     }
   }
 
   printf("\n");
-  add_to_ipset(response_adds, addr_numbs);
+  add_to_ipset(response_adds, addrsnum);
   return 0;
 }
 
@@ -728,34 +751,91 @@ static void free_delay(int pos) {
   free(delay_queue[pos].addr);
 }
 
-static int add_to_ipset(struct in_addr *adds, int n){
+static int init_ipset(void){
   char cmd[128] = {0};
-  int i = 0;
-  int retcode = 0;
   int buf_size = sizeof(cmd);
-
-  if(n <= 0 || ipset_name == NULL)
-	  return 0;
+  int retcode = 0;
 
   snprintf(cmd, buf_size, "ipset create %s iphash -exist", ipset_name);
-  retcode = system(cmd);
-  if(retcode != 0)
-	  return retcode;
+  if(verbose)
+    printf("%s\n", cmd);
+  return system(cmd);
+}
 
-  if(verbose)
-	  printf("add to ipset %s: ", ipset_name);
-  for(i=0; i<n; i++){
-	  memset(cmd, 0, buf_size);
-	  snprintf(cmd, buf_size, "ipset add %s %s -exist",
-			  ipset_name, inet_ntoa(adds[i]));
-	  if (verbose)
-	    printf("%s, ", inet_ntoa(adds[i]));
-	  retcode = system(cmd);
-	  if(retcode != 0)
-		  return retcode;
+static int add_to_ipset(struct in_addr adds[], int n){
+  char buf[64] = {0};
+  const int buf_size = 64;
+  char cmd[256] = {0};
+  const int cmd_size = 256;
+  int i = 0;
+  int retcode = 0;
+
+  if(n <= 0 || ipset_name == NULL)
+    return 0;
+
+  for(i=0; i<n;){
+    if((int)(adds[i].s_addr) != 0){
+      snprintf(buf, buf_size, "ipset add %s %s -exist;",
+        ipset_name, inet_ntoa(adds[i]));
+      strncat(cmd, buf, cmd_size/4);
+    }
+    i++;
+
+    if(i%4 == 0 || i >= n){
+      if(verbose)
+        printf("%s\n", cmd);
+      retcode = system(cmd);
+      if(retcode != 0)
+        return retcode;
+      memset(cmd, 0, buf_size);
+    }
   }
-  if(verbose)
-	  printf("\n");
+
+  return 0;
+}
+
+static int init_domain_hashset(void){
+  char line_buf[128] = {0};
+  size_t len = sizeof(line_buf);
+  char *line = 0;
+  FILE *fp = 0;
+
+  domain_set = new_hashset(8);
+  if(domain_set == NULL){
+    ERR("new_hashset");    
+    return -1;
+  }
+
+  fp = fopen(domains_file, "rb");
+  if (fp == NULL) {
+    ERR("fopen");
+    VERR("Can't open domain list: %s\n", domains_file);
+    return -1;
+  }
+  while ((line = fgets(line_buf, len, fp))) {
+    char *sp_pos;
+    sp_pos = strchr(line, '\r');
+    if (sp_pos) *sp_pos = 0;
+    sp_pos = strchr(line, '\n');
+    if (sp_pos) *sp_pos = 0;
+    hashset_add_key(domain_set, line);
+  }
+  fclose(fp);
+
+  return 0;
+}
+
+static int domain_match(const char *domain){
+  hashset_t *set = domain_set;
+  const char *p = domain+strlen(domain);
+  if(hashset_find(set, domain)) 
+    return 1;
+  while(p != domain){
+    if(*p == '.'){
+      if(hashset_find(set, p+1)) return 1;
+    }
+    p--;
+  }
 
   return 0;
 }
