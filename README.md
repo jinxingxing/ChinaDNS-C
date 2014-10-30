@@ -6,6 +6,8 @@ ChinaDNS-C
 Fix [weird things] with DNS in China.
 This is a port of [ChinaDNS] to C, especially for OpenWRT.
 
+If you want to fix other weird things as well, you might also want to use [ShadowVPN].
+
 Install
 -------
 
@@ -28,7 +30,9 @@ Install
             git clone https://github.com/clowwindy/ChinaDNS-C.git
             popd
             make menuconfig # select Network/ChinaDNS
-            make
+            # Optional
+            make -j
+            make V=99 package/ChinaDNS-C/openwrt/compile
 
 * Tomoto
 
@@ -58,6 +62,18 @@ Usage
 
         opkg install ChinaDNS-C_1.x.x_ar71xx.ipk
         /etc/init.d/chinadns start
+
+    (Optional) We strongly recommend you to set ChinaDNS as a upstream DNS
+    server for dnsmasq instead of using ChinaDNS directly:
+
+    1. Run `/etc/init.d/chinadns stop`
+    2. Remove the 2 lines containing `iptables` in `/etc/init.d/chinadns`.
+    3. Update `/etc/dnsmasq.conf` to use only 127.0.0.1#5353:
+
+            no-resolv
+            server=127.0.0.1#5353
+
+    4. Restart chinadns and dnsmasq
 
 Test if it works correctly:
 
@@ -123,13 +139,14 @@ Please visit [Issue Tracker]
 Mailing list: http://groups.google.com/group/shadowsocks
 
 
-[Build Status]:         https://img.shields.io/travis/clowwindy/ChinaDNS-C/master.svg?style=flat
+[Build Status]:         https://travis-ci.org/clowwindy/ChinaDNS-C.svg?branch=master
 [ChinaDNS]:             https://github.com/clowwindy/ChinaDNS
 [Download]:             https://sourceforge.net/projects/chinadns/files/dist/
 [Issue Tracker]:        https://github.com/clowwindy/ChinaDNS-C/issues?state=open
 [Download precompiled]: https://sourceforge.net/projects/chinadns/files/dist/
 [Download a release]:   https://github.com/clowwindy/ChinaDNS-C/releases
 [SDK]:                  http://wiki.openwrt.org/doc/howto/obtain.firmware.sdk
+[ShadowVPN]:            https://github.com/clowwindy/ShadowVPN
 [Tomato toolchain]:     http://downloads.linksysbycisco.com/downloads/WRT54GL_v4.30.11_11_US.tgz
 [Travis CI]:            https://travis-ci.org/clowwindy/ChinaDNS-C
 [weird things]:         http://en.wikipedia.org/wiki/Great_Firewall_of_China#Blocking_methods
